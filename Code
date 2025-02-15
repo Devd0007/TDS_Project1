@@ -1,0 +1,129 @@
+from fastapi import FastAPI, Query
+from pydantic import BaseModel
+import subprocess
+import json
+from datetime import datetime
+from pathlib import Path
+import markdown
+import sqlite3
+from sentence_transformers import SentenceTransformer, util
+import pytesseract
+from PIL import Image
+
+app = FastAPI()
+
+class TaskRequest(BaseModel):
+    task: str
+    data: dict = {}
+
+@app.post("/run")
+def run_task(request: TaskRequest):
+    task = request.task.lower()
+    data = request.data
+    
+    if task == "count wednesdays":
+        return count_wednesdays()
+    elif task == "sort contacts":
+        return sort_contacts()
+    elif task == "format markdown":
+        return format_markdown()
+    elif task == "extract emails":
+        return extract_email()
+    elif task == "extract credit card":
+        return extract_credit_card()
+    elif task == "find similar comments":
+        return find_similar_comments()
+    elif task == "calculate gold ticket sales":
+        return calculate_gold_ticket_sales()
+    else:
+        return {"error": "Task not recognized"}
+
+# Task Implementations
+
+def count_wednesdays():
+    file_path = Path("/data/dates.txt")
+    output_path = Path("/data/dates-wednesdays.txt")
+    
+    with file_path.open() as f:
+        dates = [datetime.strptime(line.strip(), "%Y-%m-%d") for line in f if line.strip()]
+    
+    count = sum(1 for date in dates if date.strftime('%A') == 'Wednesday')
+    output_path.write_text(str(count))
+    
+    return {"result": f"Wednesdays count saved: {count}"}
+
+
+def sort_contacts():
+    input_file = Path("/data/contacts.json")
+    output_file = Path("/data/contacts-sorted.json")
+    
+    with input_file.open() as f:
+        contacts = json.load(f)
+    
+    contacts.sort(key=lambda x: (x.get("last_name", ""), x.get("first_name", "")))
+    output_file.write_text(json.dumps(contacts, indent=2))
+    
+    return {"result": "Contacts sorted and saved"}
+
+
+def format_markdown():
+    input_file = "/data/format.md"
+    subprocess.run(["npx", "prettier", "--write", input_file], check=True)
+    return {"result": "Markdown formatted"}
+
+
+def extract_email():
+    input_file = Path("/data/email.txt")
+    output_file = Path("/data/email-sender.txt")
+    
+    email_content = input_file.read_text()
+    sender_email = email_content.split("From:")[1].split("\n")[0].strip()
+    output_file.write_text(sender_email)
+    
+    return {"result": "Email extracted and saved"}
+
+
+def extract_credit_card():
+    image_path = "/data/credit-card.png"
+    output_path = "/data/credit-card.txt"
+    
+    text = pytesseract.image_to_string(Image.open(image_path))
+    card_number = "".join(filter(str.isdigit, text))
+    Path(output_path).write_text(card_number)
+    
+    return {"result": "Credit card extracted"}
+
+
+def find_similar_comments():
+    input_file = Path("/data/comments.txt")
+    output_file = Path("/data/comments-similar.txt")
+    
+    comments = input_file.read_text().splitlines()
+    model = SentenceTransformer("all-MiniLM-L6-v2")
+    embeddings = model.encode(comments, convert_to_tensor=True)
+    similarity_scores = util.pytorch_cos_sim(embeddings, embeddings)
+    
+    max_sim = -1
+    best_pair = ("", "")
+    for i in range(len(comments)):
+        for j in range(i + 1, len(comments)):
+            if similarity_scores[i][j] > max_sim:
+                max_sim = similarity_scores[i][j]
+                best_pair = (comments[i], comments[j])
+    
+    output_file.write_text("\n".join(best_pair))
+    return {"result": "Most similar comments saved"}
+
+
+def calculate_gold_ticket_sales():
+    db_path = "/data/ticket-sales.db"
+    output_file = Path("/data/ticket-sales-gold.txt")
+    
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT SUM(units * price) FROM tickets WHERE type = 'Gold'")
+    total_sales = cursor.fetchone()[0] or 0
+    conn.close()
+    
+    output_file.write_text(str(total_sales))
+    return {"result": f"Total gold ticket sales: {total_sales}"}
